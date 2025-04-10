@@ -1,24 +1,31 @@
-#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
+#include <unistd.h>
+#include <string.h>
 
 char username[100];
 char password[100];
 char hostname[100];
 char prompt[100];
 
-int main(void) {
-	printf("username : ");
-	scanf("%s", username);
-	printf("password : ");
-	scanf("%s", password);
-	printf("hostname : ");
-	scanf("%s", hostname);
-	while (1){
-		printf("%s@%s:$ ",username,hostname);
-		scanf("%s", prompt);
-		if (prompt == "exit") {
-			printf("logout");
-			break;
-		}
-	}
+int main(){
+    // get user information
+    printf("Enter username: ");
+    scanf("%s", username);
+    printf("Enter password: ");
+    scanf("%s", password);
+    gethostname(hostname, sizeof(hostname));
+
+    while(1){
+        // prompt
+        printf("%s@%s:~$ ", username, hostname);
+        scanf("%s", prompt);
+
+        // exit
+        if(strcmp(prompt, "exit") == 0){
+            printf("logout\n");
+            break;
+        }
+    }
+    return 0;
+    
 }
