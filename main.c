@@ -9,6 +9,7 @@ char prompt[100];
 
 int main(){
     // get user information
+    printf("Welcome to my Bash Shell!\n");
     printf("Enter username: ");
     scanf("%s", username);
     printf("Enter password: ");
