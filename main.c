@@ -4,7 +4,8 @@
 #include <stdlib.h>
 #include <dirent.h>
 
-#define MAX_INPUT_SIZE 4096
+#define MAX_INPUT_SIZE 1024
+#define MAX_ARGS 128
 
 char username[MAX_INPUT_SIZE];
 char password[MAX_INPUT_SIZE];
@@ -12,6 +13,23 @@ char hostname[MAX_INPUT_SIZE];
 char input[MAX_INPUT_SIZE];
 char current_path[MAX_INPUT_SIZE];
 
+// CommandType
+typedef enum CommandType {
+    CMD_NORMAL,
+    CMD_PIPELINE,
+    CMD_SEQUENCE,
+    CMD_AND,
+    CMD_OR,
+    CMD_BACKGROUND
+} CommandType;
+
+// Command
+typedef struct Command {
+    CommandType type;
+    struct Command *left;
+    struct Command *right;
+    char *argv[MAX_ARGS];
+}
 
 // get user information
 void get_user_info() {    
@@ -44,6 +62,10 @@ void pwd() {
 // cd
 void cd(char *input) {
     char *path = input + 3;
+    if(path[0] == '~'){
+        const char *home = getenv("HOME");
+        
+    }
     if(chdir(path) == 0){   // chdir : 성공 시 0 반환 / 실패 시 -1 반환
         getcwd(current_path, sizeof(current_path));
     } else {
@@ -90,6 +112,7 @@ void cat(char *input) {
     return;
 }
 
+// main
 int main(){
     // get user information
     get_user_info();
@@ -135,6 +158,7 @@ int main(){
         else if(strncmp(input, "cat ", 4) == 0){
             cat(input);
         }
+
     }
     return 0;
 }
