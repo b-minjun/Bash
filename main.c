@@ -12,6 +12,7 @@ char password[MAX_INPUT_SIZE];
 char hostname[MAX_INPUT_SIZE];
 char input[MAX_INPUT_SIZE];
 char current_path[MAX_INPUT_SIZE];
+char *tokens[MAX_ARGS];
 
 // CommandType
 typedef enum CommandType {
@@ -29,6 +30,129 @@ typedef struct Command {
     struct Command *left;
     struct Command *right;
     char *argv[MAX_ARGS];
+} Command;
+
+// 함수 선언
+void tokenize(char *input);
+Command* parse_command(int *pos);
+Command* parse_pipeline(int *pos);
+Command* parse_sequence(int *pos);
+void print_command_tree(Command *cmd, int depth);
+void get_user_info();
+void pwd();
+void cd(char *input);
+void ls(int show_all);
+void cat(char *input);
+void free_command(Command *cmd);
+
+// tokenize input
+void tokenize(char *input) {
+    char *token = strtok(input, " \t\n");
+    int i = 0;
+    while (token && i < MAX_ARGS - 1) {
+        tokens[i++] = token;
+        token = strtok(NULL, " \t\n");
+    }
+    tokens[i] = NULL;
+}
+
+// parse command
+Command* parse_command(int *pos) {
+    if (tokens[*pos] == NULL) return NULL;
+
+    Command *cmd = malloc(sizeof(Command));
+    cmd->type = CMD_NORMAL;
+    cmd->left = cmd->right = NULL;
+
+    int i = 0;
+    while (tokens[*pos] && strcmp(tokens[*pos], "|") != 0 &&
+            strcmp(tokens[*pos], "&&") != 0 &&
+            strcmp(tokens[*pos], "||") != 0 &&
+            strcmp(tokens[*pos], ";") != 0) {
+        cmd->argv[i++] = tokens[(*pos)++];
+    }
+    cmd->argv[i] = NULL;
+    return cmd;
+}
+
+// parse pipeline
+Command* parse_pipeline(int *pos) {
+    Command *left = parse_command(pos);
+    while (tokens[*pos] && strcmp(tokens[*pos], "|") == 0) {
+        (*pos)++;
+        Command *right = parse_command(pos);
+
+        Command *pipe_cmd = malloc(sizeof(Command));
+        pipe_cmd->type = CMD_PIPELINE;
+        pipe_cmd->left = left;
+        pipe_cmd->right = right;
+        left = pipe_cmd;
+    }
+    return left;
+}
+
+// parse sequence, and, or
+Command* parse_sequence(int *pos) {
+    Command *left = parse_pipeline(pos);
+    while (tokens[*pos]) {
+        CommandType type;
+        if (strcmp(tokens[*pos], ";") == 0) type = CMD_SEQUENCE;
+        else if (strcmp(tokens[*pos], "&&") == 0) type = CMD_AND;
+        else if (strcmp(tokens[*pos], "||") == 0) type = CMD_OR;
+        else break;
+
+        (*pos)++;
+        Command *right = parse_pipeline(pos);
+
+        Command *cmd = malloc(sizeof(Command));
+        cmd->type = type;
+        cmd->left = left;
+        cmd->right = right;
+        left = cmd;
+    }
+    return left;
+}
+
+// print command tree
+void print_command_tree(Command *cmd, int depth) {
+    if (cmd == NULL) return;
+
+    for (int i = 0; i < depth; i++) printf("\t");
+
+    switch (cmd->type) {
+        case CMD_NORMAL:
+            printf("CMD_NORMAL: ");
+            for (int i = 0; cmd->argv[i] != NULL; i++) {
+                printf("%s ", cmd->argv[i]);
+            }
+            printf("\n");
+            break;
+        case CMD_PIPELINE:
+            printf("CMD_PIPELINE\n");
+            break;
+        case CMD_SEQUENCE:
+            printf("CMD_SEQUENCE (;)\n");
+            break;
+        case CMD_AND:
+            printf("CMD_AND (&&)\n");
+            break;
+        case CMD_OR:
+            printf("CMD_OR (||)\n");
+            break;
+        case CMD_BACKGROUND:
+            printf("CMD_BACKGROUND (&)\n");
+            break;
+        default:
+            printf("UNKNOWN\n");
+            break;
+    }
+
+    if (cmd->left) {
+        print_command_tree(cmd->left, depth + 1);
+    }
+    if (cmd->right) {
+        print_command_tree(cmd->right, depth + 1);
+    }
 }
 
 // get user information
@@ -112,11 +236,20 @@ void cat(char *input) {
     return;
 }
 
+//free command tree
+void free_command(Command *cmd) {
+    if (cmd == NULL) return;
+
+    if (cmd->left) free_command(cmd->left);
+    if (cmd->right) free_command(cmd->right);
+
+    free(cmd);
+}
+
 // main
 int main(){
     // get user information
     get_user_info();
-    
 
     while(1){
         // prompt 
@@ -129,36 +262,57 @@ int main(){
         fgets(input, MAX_INPUT_SIZE, stdin);
         input[strcspn(input, "\n")] = 0;
 
+        // tokenize input
+        tokenize(input);
+
+        for(int i = 0; tokens[i] != NULL; i++){
+            printf("%s ", tokens[i]);
+        }
+        printf("\n");
+
+        // parse input(make command tree)
+        int pos = 0;
+        Command *cmd = parse_sequence(&pos);
+
+        // print command tree
+        print_command_tree(cmd, 0);
+
+        // parse input(make command tree)
+        
+        // print command tree
+
         // exit
         if(strcmp(input, "exit") == 0){
             printf("logout\n");
             break;
         }
 
-        // pwd
-        else if(strcmp(input, "pwd") == 0){
-            pwd();
-        }
+        // // pwd
+        // else if(strcmp(input, "pwd") == 0){
+        //     pwd();
+        // }
 
-        // cd
-        else if(strncmp(input, "cd ", 3) == 0){
-            cd(input);
-        }
+        // // cd
+        // else if(strncmp(input, "cd ", 3) == 0){
+        //     cd(input);
+        // }
 
-        // ls
-        else if(strncmp(input, "ls", 2) == 0){
-            if(strstr(input, "-a")){
-                ls(1);
-            } else{
-                ls(0);
-            }
-        }
+        // // ls
+        // else if(strncmp(input, "ls", 2) == 0){
+        //     if(strstr(input, "-a")){
+        //         ls(1);
+        //     } else{
+        //         ls(0);
+        //     }
+        // }
 
-        // cat
-        else if(strncmp(input, "cat ", 4) == 0){
-            cat(input);
-        }
+        // // cat
+        // else if(strncmp(input, "cat ", 4) == 0){
+        //     cat(input);
+        // }
 
+        // free command tree
+        free_command(cmd);
     }
     return 0;
 }
