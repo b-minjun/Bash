@@ -47,13 +47,39 @@ void free_command(Command *cmd);
 
 // tokenize input
 void tokenize(char *input) {
-    char *token = strtok(input, " \t\n");
-    int i = 0;
-    while (token && i < MAX_ARGS - 1) {
-        tokens[i++] = token;
-        token = strtok(NULL, " \t\n");
+    int i = 0, j = 0;
+
+    while (input[i] != '\0') {
+        if (input[i] == ' ' || input[i] == '\t' || input[i] == '\n') {
+            i++;
+            continue;
+        }
+        
+        if (strchr("|&;", input[i])) {
+            char op[3] = {0};
+            op[0] = input[i];
+            if ((input[i] == '|' || input[i] == '&') && input[i + 1] == input[i]) {
+                op[1] = input[i];
+                i += 2;
+            } else {
+                i++;
+            }
+            tokens[j] = strdup(op);
+            j++;
+            continue;
+        }
+
+        int start = i;
+        while (input[i] != '\0' &&
+                !strchr(" \t\n|&;", input[i])) {
+            i++;
+        }
+        int len = i - start;
+        char *word = malloc(len + 1);
+        strncpy(word, &input[start], len);
+        word[len] = '\0';
+        tokens[j++] = word;
     }
-    tokens[i] = NULL;
 }
 
 // parse command
