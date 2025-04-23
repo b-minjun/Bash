@@ -20,8 +20,7 @@ typedef enum CommandType {
     CMD_PIPELINE,
     CMD_SEQUENCE,
     CMD_AND,
-    CMD_OR,
-    CMD_BACKGROUND
+    CMD_OR
 } CommandType;
 
 // Command
@@ -30,10 +29,13 @@ typedef struct Command {
     struct Command *left;
     struct Command *right;
     char *argv[MAX_ARGS];
+    int is_background;
 } Command;
 
 // 함수 선언
 void tokenize(char *input);
+void clear_tokens();
+Command* parse_input();
 Command* parse_command(int *pos);
 Command* parse_pipeline(int *pos);
 Command* parse_sequence(int *pos);
@@ -54,7 +56,7 @@ void tokenize(char *input) {
             i++;
             continue;
         }
-        
+
         if (strchr("|&;", input[i])) {
             char op[3] = {0};
             op[0] = input[i];
@@ -82,6 +84,23 @@ void tokenize(char *input) {
     }
 }
 
+// clear tokens
+void clear_tokens() {
+    for (int i = 0; i < MAX_ARGS; i++) {
+        if (tokens[i]) {
+            free(tokens[i]);
+            tokens[i] = NULL;
+        }
+    }
+}
+
+// parse input
+Command* parse_input() {
+    int pos = 0;
+    Command *cmd = parse_sequence(&pos);
+    return cmd;
+}
+
 // parse command
 Command* parse_command(int *pos) {
     if (tokens[*pos] == NULL) return NULL;
@@ -89,14 +108,27 @@ Command* parse_command(int *pos) {
     Command *cmd = malloc(sizeof(Command));
     cmd->type = CMD_NORMAL;
     cmd->left = cmd->right = NULL;
+    cmd->is_background = 0;
+
+    if (strcmp(tokens[*pos], "&") == 0) {
+        cmd->is_background = 1;
+        (*pos)++;
+    }
 
     int i = 0;
     while (tokens[*pos] && strcmp(tokens[*pos], "|") != 0 &&
             strcmp(tokens[*pos], "&&") != 0 &&
             strcmp(tokens[*pos], "||") != 0 &&
-            strcmp(tokens[*pos], ";") != 0) {
+            strcmp(tokens[*pos], ";") != 0 &&
+            strcmp(tokens[*pos], "&") != 0) {
         cmd->argv[i++] = tokens[(*pos)++];
     }
+
+    if (tokens[*pos] != NULL && strcmp(tokens[*pos], "&") == 0) {
+        cmd->is_background = 1;
+        (*pos)++;
+    }
+
     cmd->argv[i] = NULL;
     return cmd;
 }
@@ -147,7 +179,7 @@ void print_command_tree(Command *cmd, int depth) {
 
     switch (cmd->type) {
         case CMD_NORMAL:
-            printf("CMD_NORMAL: ");
+            printf("CMD_NORMAL (%d): ",cmd->is_background);
             for (int i = 0; cmd->argv[i] != NULL; i++) {
                 printf("%s ", cmd->argv[i]);
             }
@@ -164,9 +196,6 @@ void print_command_tree(Command *cmd, int depth) {
             break;
         case CMD_OR:
             printf("CMD_OR (||)\n");
-            break;
-        case CMD_BACKGROUND:
-            printf("CMD_BACKGROUND (&)\n");
             break;
         default:
             printf("UNKNOWN\n");
@@ -292,13 +321,12 @@ int main(){
         tokenize(input);
 
         for(int i = 0; tokens[i] != NULL; i++){
-            printf("%s ", tokens[i]);
+            printf("%s \n", tokens[i]);
         }
         printf("\n");
 
         // parse input(make command tree)
-        int pos = 0;
-        Command *cmd = parse_sequence(&pos);
+        Command *cmd = parse_input();
 
         // print command tree
         print_command_tree(cmd, 0);
@@ -337,6 +365,8 @@ int main(){
         //     cat(input);
         // }
 
+        // free tokens
+        clear_tokens();
         // free command tree
         free_command(cmd);
     }
