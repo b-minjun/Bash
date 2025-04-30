@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <sys/wait.h>
 
 #define MAX_INPUT_SIZE 1024
 #define MAX_ARGS 128
@@ -34,11 +35,11 @@ typedef struct Command {
 
 // 함수 선언
 void tokenize(char *input);
-void clear_tokens();
 Command* parse_input();
 Command* parse_command(int *pos);
 Command* parse_pipeline(int *pos);
 Command* parse_sequence(int *pos);
+void execute_command(Command *cmd);
 void print_command_tree(Command *cmd, int depth);
 void get_user_info();
 void pwd();
@@ -46,6 +47,7 @@ void cd(char *input);
 void ls(int show_all);
 void cat(char *input);
 void free_command(Command *cmd);
+void clear_tokens();
 
 // tokenize input
 void tokenize(char *input) {
@@ -81,16 +83,6 @@ void tokenize(char *input) {
         strncpy(word, &input[start], len);
         word[len] = '\0';
         tokens[j++] = word;
-    }
-}
-
-// clear tokens
-void clear_tokens() {
-    for (int i = 0; i < MAX_ARGS; i++) {
-        if (tokens[i]) {
-            free(tokens[i]);
-            tokens[i] = NULL;
-        }
     }
 }
 
@@ -171,10 +163,102 @@ Command* parse_sequence(int *pos) {
     return left;
 }
 
+// execute command
+void execute_command(Command *cmd) {
+    if (cmd == NULL) return;
+
+    switch (cmd->type) {
+        case CMD_NORMAL: {
+            pid_t pid = fork();
+            if (pid == 0) {
+                execvp(cmd->argv[0], cmd->argv);
+                perror("execvp failed");
+                exit(EXIT_FAILURE);
+            } else if (pid > 0) {
+                if (!cmd->is_background) {
+                    waitpid(pid, NULL, 0);
+                }
+            } else {
+                perror("fork failed");
+            }
+            break;
+        }
+
+        case CMD_SEQUENCE: {
+            execute_command(cmd->left);
+            execute_command(cmd->right);
+            break;
+        }
+
+        case CMD_AND: {
+            int status;
+            pid_t pid = fork();
+            if (pid == 0) {
+                execvp(cmd->left->argv[0], cmd->left->argv);
+                perror("execvp failed");
+                exit(EXIT_FAILURE);
+            } else if (pid > 0) {
+                waitpid(pid, &status, 0);
+                if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                    execute_command(cmd->right);
+                }
+            }
+            break;
+        }
+
+        case CMD_OR: {
+            int status;
+            pid_t pid = fork();
+            if (pid == 0) {
+                execvp(cmd->left->argv[0], cmd->left->argv);
+                perror("execvp failed");
+                exit(EXIT_FAILURE);
+            } else if (pid > 0) {
+                waitpid(pid, &status, 0);
+                if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
+                    execute_command(cmd->right);
+                }
+            }
+            break;
+        }
+
+        case CMD_PIPELINE: {
+            int fd[2];
+            pipe(fd);
+
+            pid_t left_pid = fork();
+            if (left_pid == 0) {
+                dup2(fd[1], STDOUT_FILENO);
+                close(fd[0]);
+                close(fd[1]);
+                execvp(cmd->left->argv[0], cmd->left->argv);
+                perror("execvp left failed");
+                exit(EXIT_FAILURE);
+            }
+
+            pid_t right_pid = fork();
+            if (right_pid == 0) {
+                dup2(fd[0], STDIN_FILENO);
+                close(fd[1]);
+                close(fd[0]);
+                execvp(cmd->right->argv[0], cmd->right->argv);
+                perror("execvp right failed");
+                exit(EXIT_FAILURE);
+            }
+
+            close(fd[0]);
+            close(fd[1]);
+            waitpid(left_pid, NULL, 0);
+            waitpid(right_pid, NULL, 0);
+            break;
+        }
+    }
+}
+
 // print command tree
 void print_command_tree(Command *cmd, int depth) {
     if (cmd == NULL) return;
-
+    
     for (int i = 0; i < depth; i++) printf("\t");
 
     switch (cmd->type) {
@@ -301,6 +385,16 @@ void free_command(Command *cmd) {
     free(cmd);
 }
 
+// clear tokens
+void clear_tokens() {
+    for (int i = 0; i < MAX_ARGS; i++) {
+        if (tokens[i]) {
+            free(tokens[i]);
+            tokens[i] = NULL;
+        }
+    }
+}
+
 // main
 int main(){
     // get user information
@@ -309,9 +403,9 @@ int main(){
     while(1){
         // prompt 
         const char *home = getenv("HOME");
-        if(strncmp(current_path, home, strlen(home)) == 0){ // home directory = '~'
+        if (strncmp(current_path, home, strlen(home)) == 0) { 
             printf("%s@%s:~%s$ ", username, hostname, current_path + strlen(home));
-        } else{
+        } else {
             printf("%s@%s:%s$ ", username, hostname, current_path);
         }
         fgets(input, MAX_INPUT_SIZE, stdin);
@@ -320,7 +414,7 @@ int main(){
         // tokenize input
         tokenize(input);
 
-        for(int i = 0; tokens[i] != NULL; i++){
+        for (int i = 0; tokens[i] != NULL; i++) {
             printf("%s \n", tokens[i]);
         }
         printf("\n");
@@ -330,13 +424,13 @@ int main(){
 
         // print command tree
         print_command_tree(cmd, 0);
+        printf("\n");
 
-        // parse input(make command tree)
-        
-        // print command tree
+        // execute command
+        execute_command(cmd);
 
         // exit
-        if(strcmp(input, "exit") == 0){
+        if (strcmp(input, "exit") == 0) {
             printf("logout\n");
             break;
         }
@@ -361,7 +455,7 @@ int main(){
         // }
 
         // // cat
-        // else if(strncmp(input, "cat ", 4) == 0){
+        // else if(strncmp(input, "cat ", 4) == 0)  {
         //     cat(input);
         // }
 
