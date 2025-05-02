@@ -458,6 +458,9 @@ int main(){
         }
         fgets(input, MAX_INPUT_SIZE, stdin);
         input[strcspn(input, "\n")] = 0;
+        if (strlen(input) == 0) {
+            continue;
+        }
 
         int print_tokens = 0;
         int print_tree = 0;
