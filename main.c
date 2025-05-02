@@ -35,6 +35,7 @@ typedef struct Command {
 
 // 함수 선언
 void tokenize(char *input);
+int is_multi_command();
 Command* parse_input();
 Command* parse_command(int *pos);
 Command* parse_pipeline(int *pos);
@@ -43,7 +44,7 @@ void execute_command(Command *cmd);
 void print_command_tree(Command *cmd, int depth);
 void get_user_info();
 void pwd();
-void cd(char *input);
+int cd(char *input);
 void ls(int show_all);
 void cat(char *input);
 void free_command(Command *cmd);
@@ -83,6 +84,16 @@ void tokenize(char *input) {
         strncpy(word, &input[start], len);
         word[len] = '\0';
         tokens[j++] = word;
+    }
+}
+
+int is_multi_command() {
+    for (int i = 0; tokens[i] != NULL; i++) {
+        if (strcmp(tokens[i], ";") == 0 ||
+            strcmp(tokens[i], "&&") == 0 ||
+            strcmp(tokens[i], "||") == 0) {
+            return 1;
+        }
     }
 }
 
@@ -169,6 +180,11 @@ void execute_command(Command *cmd) {
 
     switch (cmd->type) {
         case CMD_NORMAL: {
+            // cd
+            if (strcmp(cmd->argv[0], "cd") == 0) {
+                cd(cmd->argv[1]);
+                return;
+            }// not cd
             pid_t pid = fork();
             if (pid == 0) {
                 execvp(cmd->argv[0], cmd->argv);
@@ -191,33 +207,50 @@ void execute_command(Command *cmd) {
         }
 
         case CMD_AND: {
-            int status;
-            pid_t pid = fork();
-            if (pid == 0) {
-                execvp(cmd->left->argv[0], cmd->left->argv);
-                perror("execvp failed");
-                exit(EXIT_FAILURE);
-            } else if (pid > 0) {
-                waitpid(pid, &status, 0);
-                if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-                    execute_command(cmd->right);
+            int status = 1;
+            if (cmd->left->type == CMD_NORMAL && strcmp(cmd->left->argv[0], "cd") == 0) {
+                status = cd(cmd->left->argv[1]);
+            } else {    
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execvp(cmd->left->argv[0], cmd->left->argv);
+                    perror("execvp failed");
+                    exit(EXIT_FAILURE);
+                } else if (pid > 0) {
+                    int wstatus;
+                    waitpid(pid, &wstatus, 0);
+                    if (WIFEXITED(wstatus)) {
+                        status = WEXITSTATUS(wstatus);
+                    }
                 }
+            }
+
+            if (status == 0) {
+                execute_command(cmd->right);
             }
             break;
         }
 
         case CMD_OR: {
-            int status;
-            pid_t pid = fork();
-            if (pid == 0) {
-                execvp(cmd->left->argv[0], cmd->left->argv);
-                perror("execvp failed");
-                exit(EXIT_FAILURE);
-            } else if (pid > 0) {
-                waitpid(pid, &status, 0);
-                if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
-                    execute_command(cmd->right);
+            int status = 1;
+            if (cmd->left->type == CMD_NORMAL && strcmp(cmd->left->argv[0], "cd") == 0) {
+                status = cd(cmd->left->argv[1]);
+            } else {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execvp(cmd->left->argv[0], cmd->left->argv);
+                    perror("execvp failed");
+                    exit(EXIT_FAILURE);
+                } else if (pid > 0) {
+                    int wstatus;
+                    waitpid(pid, &wstatus, 0);
+                    if (!(WIFEXITED(status))) {
+                        status = WEXITSTATUS(status);
+                    }
                 }
+            }
+            if (status != 0) {
+                execute_command(cmd->right);
             }
             break;
         }
@@ -323,18 +356,19 @@ void pwd() {
 }
 
 // cd
-void cd(char *input) {
-    char *path = input + 3;
+int cd(char *input) {
+    char *path = input;
     if(path[0] == '~'){
         const char *home = getenv("HOME");
         
     }
     if(chdir(path) == 0){   // chdir : 성공 시 0 반환 / 실패 시 -1 반환
         getcwd(current_path, sizeof(current_path));
+        return 0;
     } else {
         perror("cd error");
+        return 1;
     }
-    return;
 }
 
 // ls
@@ -360,7 +394,7 @@ void ls(int show_all) {
 
 // cat
 void cat(char *input) {
-    char *filename = input + 4;
+    char *filename = input;
     FILE *file = fopen(filename, "r");   // fopen : 성공 시 file의 주소 반환 / 실패 시 NULL 반환 / r : 읽기 전용 모드
     if (file == NULL) {
         perror("cat error");
@@ -414,6 +448,8 @@ int main(){
         // tokenize input
         tokenize(input);
 
+        int is_multi = is_multi_command();
+
         for (int i = 0; tokens[i] != NULL; i++) {
             printf("%s \n", tokens[i]);
         }
@@ -426,38 +462,40 @@ int main(){
         print_command_tree(cmd, 0);
         printf("\n");
 
-        // execute command
-        execute_command(cmd);
-
         // exit
-        if (strcmp(input, "exit") == 0) {
+        if (is_multi == 0 && strcmp(cmd->argv[0], "exit") == 0) {
             printf("logout\n");
             break;
         }
 
-        // // pwd
-        // else if(strcmp(input, "pwd") == 0){
-        //     pwd();
-        // }
+        // pwd
+        else if(is_multi == 0 && strcmp(cmd->argv[0], "pwd") == 0){
+            pwd();
+        }
 
-        // // cd
-        // else if(strncmp(input, "cd ", 3) == 0){
-        //     cd(input);
-        // }
+        // cd
+        else if(is_multi == 0 && strcmp(cmd->argv[0], "cd") == 0){
+            cd(cmd->argv[1]);
+        }
 
-        // // ls
-        // else if(strncmp(input, "ls", 2) == 0){
-        //     if(strstr(input, "-a")){
-        //         ls(1);
-        //     } else{
-        //         ls(0);
-        //     }
-        // }
+        // ls
+        else if(is_multi == 0 && strcmp(cmd->argv[0], "ls") == 0){
+            if(cmd->argv[1] && strstr(cmd->argv[1], "-a")){
+                ls(1);
+            } else{
+                ls(0);
+            }
+        }
 
-        // // cat
-        // else if(strncmp(input, "cat ", 4) == 0)  {
-        //     cat(input);
-        // }
+        // cat
+        else if(is_multi == 0 && strcmp(cmd->argv[0], "cat ") == 0)  {
+            cat(cmd->argv[1]);
+        }
+
+        // execute command exept for built-in commands
+        else{
+            execute_command(cmd);
+        }
 
         // free tokens
         clear_tokens();
