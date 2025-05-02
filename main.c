@@ -43,10 +43,10 @@ Command* parse_sequence(int *pos);
 void execute_command(Command *cmd);
 void print_command_tree(Command *cmd, int depth);
 void get_user_info();
-void pwd();
+void pwd(int is_background);
 int cd(char *input);
-void ls(int show_all);
-void cat(char *input);
+void ls(int is_background, int show_all);
+void cat(int is_background, char *input);
 void free_command(Command *cmd);
 void clear_tokens();
 
@@ -180,6 +180,11 @@ void execute_command(Command *cmd) {
 
     switch (cmd->type) {
         case CMD_NORMAL: {
+            // exit
+            if (strcmp(cmd->argv[0], "exit") == 0) {
+                printf("logout\n");
+                exit(0);
+            }
             // cd
             if (strcmp(cmd->argv[0], "cd") == 0) {
                 cd(cmd->argv[1]);
@@ -281,8 +286,12 @@ void execute_command(Command *cmd) {
 
             close(fd[0]);
             close(fd[1]);
-            waitpid(left_pid, NULL, 0);
-            waitpid(right_pid, NULL, 0);
+            if (!cmd->left->is_background) {
+                waitpid(left_pid, NULL, 0);
+            }
+            if (!cmd->right->is_background) {
+                waitpid(right_pid, NULL, 0);
+            }
             break;
         }
     }
@@ -296,7 +305,7 @@ void print_command_tree(Command *cmd, int depth) {
 
     switch (cmd->type) {
         case CMD_NORMAL:
-            printf("CMD_NORMAL (%d): ",cmd->is_background);
+            printf("CMD_NORMAL (is_background: %d): ",cmd->is_background);
             for (int i = 0; cmd->argv[i] != NULL; i++) {
                 printf("%s ", cmd->argv[i]);
             }
@@ -345,10 +354,12 @@ void get_user_info() {
 }
 
 // pwd
-void pwd() {
+void pwd(int is_background) {
     char cwd[MAX_INPUT_SIZE];
             if(getcwd(cwd, sizeof(cwd)) != NULL){   // getcwd : 성공 시 cwd의 주소 반환 / 실패 시 NULL 반환
-                printf("%s\n", cwd);
+                if(is_background == 0){
+                    printf("%s\n", cwd);
+                }
             } else {
                 perror("pwd error");
             }
@@ -372,7 +383,7 @@ int cd(char *input) {
 }
 
 // ls
-void ls(int show_all) {
+void ls(int is_background, int show_all) {
     DIR *dir;
     struct dirent *entry;
 
@@ -382,7 +393,7 @@ void ls(int show_all) {
         return;
     }
 
-    while ((entry = readdir(dir)) != NULL) {    // readdir : 성공 시 dirent 구조체의 주소 반환 / 실패 시 NULL 반환
+    while ((entry = readdir(dir)) != NULL && is_background == 0) {    // readdir : 성공 시 dirent 구조체의 주소 반환 / 실패 시 NULL 반환
         if (show_all || entry->d_name[0] != '.') {  // show_all : 1이면 숨김 파일도 출력 / 0이면 숨김 파일 제외
             printf("%s\n", entry->d_name);
         }
@@ -393,7 +404,10 @@ void ls(int show_all) {
 }
 
 // cat
-void cat(char *input) {
+void cat(int is_background, char *input) {
+    if (is_background == 1){
+        return;
+    }
     char *filename = input;
     FILE *file = fopen(filename, "r");   // fopen : 성공 시 file의 주소 반환 / 실패 시 NULL 반환 / r : 읽기 전용 모드
     if (file == NULL) {
@@ -445,23 +459,33 @@ int main(){
         fgets(input, MAX_INPUT_SIZE, stdin);
         input[strcspn(input, "\n")] = 0;
 
+        int print_tokens = 0;
+        int print_tree = 0;
+
         // tokenize input
         tokenize(input);
-
-        int is_multi = is_multi_command();
-
-        for (int i = 0; tokens[i] != NULL; i++) {
-            printf("%s \n", tokens[i]);
-        }
-        printf("\n");
 
         // parse input(make command tree)
         Command *cmd = parse_input();
 
-        // print command tree
-        print_command_tree(cmd, 0);
-        printf("\n");
+        int is_multi = is_multi_command();
 
+        // print tokens
+        if(print_tokens == 1){
+            printf("Tokens:\n");
+            for (int i = 0; tokens[i] != NULL; i++) {
+                printf("%s \n", tokens[i]);
+            }
+            printf("\n");
+        }
+
+        // print command tree
+        if(print_tree == 1){
+            printf("Command Tree:\n");
+            print_command_tree(cmd, 0);
+            printf("\n");
+        }
+        
         // exit
         if (is_multi == 0 && strcmp(cmd->argv[0], "exit") == 0) {
             printf("logout\n");
@@ -470,7 +494,7 @@ int main(){
 
         // pwd
         else if(is_multi == 0 && strcmp(cmd->argv[0], "pwd") == 0){
-            pwd();
+            pwd(cmd->is_background);
         }
 
         // cd
@@ -481,15 +505,15 @@ int main(){
         // ls
         else if(is_multi == 0 && strcmp(cmd->argv[0], "ls") == 0){
             if(cmd->argv[1] && strstr(cmd->argv[1], "-a")){
-                ls(1);
+                ls(cmd->is_background, 1);
             } else{
-                ls(0);
+                ls(cmd->is_background, 0);
             }
         }
 
         // cat
-        else if(is_multi == 0 && strcmp(cmd->argv[0], "cat ") == 0)  {
-            cat(cmd->argv[1]);
+        else if(is_multi == 0 && strcmp(cmd->argv[0], "cat") == 0)  {
+            cat(cmd->is_background, cmd->argv[1]);
         }
 
         // execute command exept for built-in commands
