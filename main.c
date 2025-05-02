@@ -8,13 +8,6 @@
 #define MAX_INPUT_SIZE 1024
 #define MAX_ARGS 128
 
-char username[MAX_INPUT_SIZE];
-char password[MAX_INPUT_SIZE];
-char hostname[MAX_INPUT_SIZE];
-char input[MAX_INPUT_SIZE];
-char current_path[MAX_INPUT_SIZE];
-char *tokens[MAX_ARGS];
-
 // CommandType
 typedef enum CommandType {
     CMD_NORMAL,
@@ -34,24 +27,25 @@ typedef struct Command {
 } Command;
 
 // 함수 선언
-void tokenize(char *input);
-int is_multi_command();
-Command* parse_input();
-Command* parse_command(int *pos);
-Command* parse_pipeline(int *pos);
-Command* parse_sequence(int *pos);
-void execute_command(Command *cmd);
+void tokenize(char *input, char *tokens[]);
+int is_multi_command(char *tokens[]);
+Command* parse_input(char *tokens[]);
+Command* parse_command(int *pos, char *tokens[]);
+Command* parse_pipeline(int *pos, char *tokens[]);
+Command* parse_sequence(int *pos, char *tokens[]);
+void execute_command(Command *cmd, char *current_path);
+void print_command_token(char *tokens[]);
 void print_command_tree(Command *cmd, int depth);
-void get_user_info();
+void get_user_info(char *username, char *password, char *hostname, char *current_path);
 void pwd(int is_background);
-int cd(char *input);
-void ls(int is_background, int show_all);
+int cd(char *input, char *current_path);
+void ls(int is_background, int show_all, char *current_path);
 void cat(int is_background, char *input);
 void free_command(Command *cmd);
-void clear_tokens();
+void free_tokens();
 
 // tokenize input
-void tokenize(char *input) {
+void tokenize(char *input, char *tokens[]) {
     int i = 0, j = 0;
 
     while (input[i] != '\0') {
@@ -87,7 +81,7 @@ void tokenize(char *input) {
     }
 }
 
-int is_multi_command() {
+int is_multi_command(char *tokens[]) {
     for (int i = 0; tokens[i] != NULL; i++) {
         if (strcmp(tokens[i], ";") == 0 ||
             strcmp(tokens[i], "&&") == 0 ||
@@ -95,17 +89,18 @@ int is_multi_command() {
             return 1;
         }
     }
+    return 0;
 }
 
 // parse input
-Command* parse_input() {
+Command* parse_input(char *tokens[]) {
     int pos = 0;
-    Command *cmd = parse_sequence(&pos);
+    Command *cmd = parse_sequence(&pos, tokens);
     return cmd;
 }
 
 // parse command
-Command* parse_command(int *pos) {
+Command* parse_command(int *pos, char *tokens[]) {
     if (tokens[*pos] == NULL) return NULL;
 
     Command *cmd = malloc(sizeof(Command));
@@ -137,11 +132,11 @@ Command* parse_command(int *pos) {
 }
 
 // parse pipeline
-Command* parse_pipeline(int *pos) {
-    Command *left = parse_command(pos);
+Command* parse_pipeline(int *pos, char *tokens[]) {
+    Command *left = parse_command(pos, tokens);
     while (tokens[*pos] && strcmp(tokens[*pos], "|") == 0) {
         (*pos)++;
-        Command *right = parse_command(pos);
+        Command *right = parse_command(pos, tokens);
 
         Command *pipe_cmd = malloc(sizeof(Command));
         pipe_cmd->type = CMD_PIPELINE;
@@ -153,8 +148,8 @@ Command* parse_pipeline(int *pos) {
 }
 
 // parse sequence, and, or
-Command* parse_sequence(int *pos) {
-    Command *left = parse_pipeline(pos);
+Command* parse_sequence(int *pos, char *tokens[]) {
+    Command *left = parse_pipeline(pos, tokens);
     while (tokens[*pos]) {
         CommandType type;
         if (strcmp(tokens[*pos], ";") == 0) type = CMD_SEQUENCE;
@@ -163,7 +158,7 @@ Command* parse_sequence(int *pos) {
         else break;
 
         (*pos)++;
-        Command *right = parse_pipeline(pos);
+        Command *right = parse_pipeline(pos, tokens);
 
         Command *cmd = malloc(sizeof(Command));
         cmd->type = type;
@@ -175,19 +170,19 @@ Command* parse_sequence(int *pos) {
 }
 
 // execute command
-void execute_command(Command *cmd) {
+void execute_command(Command *cmd, char *current_path) {
     if (cmd == NULL) return;
 
     switch (cmd->type) {
         case CMD_NORMAL: {
             // exit
-            if (strcmp(cmd->argv[0], "exit") == 0) {
+            if (cmd->argv[0] && strcmp(cmd->argv[0], "exit") == 0) {
                 printf("logout\n");
                 exit(0);
             }
             // cd
-            if (strcmp(cmd->argv[0], "cd") == 0) {
-                cd(cmd->argv[1]);
+            if (cmd->argv[0] && strcmp(cmd->argv[0], "cd") == 0) {
+                cd(cmd->argv[1], current_path);
                 return;
             }// not cd
             pid_t pid = fork();
@@ -206,15 +201,15 @@ void execute_command(Command *cmd) {
         }
 
         case CMD_SEQUENCE: {
-            execute_command(cmd->left);
-            execute_command(cmd->right);
+            execute_command(cmd->left, current_path);
+            execute_command(cmd->right, current_path);
             break;
         }
 
         case CMD_AND: {
             int status = 1;
             if (cmd->left->type == CMD_NORMAL && strcmp(cmd->left->argv[0], "cd") == 0) {
-                status = cd(cmd->left->argv[1]);
+                status = cd(cmd->left->argv[1], current_path);
             } else {    
                 pid_t pid = fork();
                 if (pid == 0) {
@@ -231,7 +226,7 @@ void execute_command(Command *cmd) {
             }
 
             if (status == 0) {
-                execute_command(cmd->right);
+                execute_command(cmd->right, current_path);
             }
             break;
         }
@@ -239,7 +234,7 @@ void execute_command(Command *cmd) {
         case CMD_OR: {
             int status = 1;
             if (cmd->left->type == CMD_NORMAL && strcmp(cmd->left->argv[0], "cd") == 0) {
-                status = cd(cmd->left->argv[1]);
+                status = cd(cmd->left->argv[1], current_path);
             } else {
                 pid_t pid = fork();
                 if (pid == 0) {
@@ -249,13 +244,13 @@ void execute_command(Command *cmd) {
                 } else if (pid > 0) {
                     int wstatus;
                     waitpid(pid, &wstatus, 0);
-                    if (!(WIFEXITED(status))) {
-                        status = WEXITSTATUS(status);
+                    if (!(WIFEXITED(wstatus))) {
+                        status = WEXITSTATUS(wstatus);
                     }
                 }
             }
             if (status != 0) {
-                execute_command(cmd->right);
+                execute_command(cmd->right, current_path);
             }
             break;
         }
@@ -295,6 +290,14 @@ void execute_command(Command *cmd) {
             break;
         }
     }
+}
+
+// print command token
+void print_command_token(char *tokens[]) {
+    for (int i = 0; tokens[i] != NULL; i++) {
+        printf("%s \n", tokens[i]);
+    }
+    return;
 }
 
 // print command tree
@@ -337,20 +340,20 @@ void print_command_tree(Command *cmd, int depth) {
 }
 
 // get user information
-void get_user_info() {    
+void get_user_info(char *username, char *password, char *hostname, char *current_path) {    
     printf("Welcome to my Bash Shell!\n");
 
     printf("Enter username: ");
-    fgets(username, sizeof(username), stdin);
+    fgets(username, MAX_INPUT_SIZE, stdin);
     username[strcspn(username, "\n")] = 0;
 
     printf("Enter password: ");
-    fgets(password, sizeof(password), stdin);
+    fgets(password, MAX_INPUT_SIZE, stdin);
     password[strcspn(password, "\n")] = 0;
 
-    gethostname(hostname, sizeof(hostname));
+    gethostname(hostname, MAX_INPUT_SIZE);
 
-    getcwd(current_path, sizeof(current_path));
+    getcwd(current_path, MAX_INPUT_SIZE);
 }
 
 // pwd
@@ -367,14 +370,14 @@ void pwd(int is_background) {
 }
 
 // cd
-int cd(char *input) {
+int cd(char *input, char *current_path) {
     char *path = input;
     if(path[0] == '~'){
         const char *home = getenv("HOME");
         
     }
     if(chdir(path) == 0){   // chdir : 성공 시 0 반환 / 실패 시 -1 반환
-        getcwd(current_path, sizeof(current_path));
+        getcwd(current_path, MAX_INPUT_SIZE);
         return 0;
     } else {
         perror("cd error");
@@ -383,7 +386,7 @@ int cd(char *input) {
 }
 
 // ls
-void ls(int is_background, int show_all) {
+void ls(int is_background, int show_all, char *current_path) {
     DIR *dir;
     struct dirent *entry;
 
@@ -433,8 +436,8 @@ void free_command(Command *cmd) {
     free(cmd);
 }
 
-// clear tokens
-void clear_tokens() {
+// free tokens
+void free_tokens(char *tokens[]) {
     for (int i = 0; i < MAX_ARGS; i++) {
         if (tokens[i]) {
             free(tokens[i]);
@@ -445,8 +448,15 @@ void clear_tokens() {
 
 // main
 int main(){
+    char username[MAX_INPUT_SIZE] = {0};
+    char password[MAX_INPUT_SIZE] = {0};
+    char hostname[MAX_INPUT_SIZE] = {0};
+    char input[MAX_INPUT_SIZE] = {0};
+    char current_path[MAX_INPUT_SIZE] = {0};
+    char *tokens[MAX_ARGS] = {0};
+
     // get user information
-    get_user_info();
+    get_user_info(username, password, hostname, current_path);
 
     while(1){
         // prompt 
@@ -462,23 +472,21 @@ int main(){
             continue;
         }
 
-        int print_tokens = 0;
-        int print_tree = 0;
+        int print_tokens = 1;
+        int print_tree = 1;
 
         // tokenize input
-        tokenize(input);
+        tokenize(input, tokens);
 
         // parse input(make command tree)
-        Command *cmd = parse_input();
+        Command *cmd = parse_input(tokens);
 
-        int is_multi = is_multi_command();
+        int is_multi = is_multi_command(tokens);
 
         // print tokens
         if(print_tokens == 1){
             printf("Tokens:\n");
-            for (int i = 0; tokens[i] != NULL; i++) {
-                printf("%s \n", tokens[i]);
-            }
+            print_command_token(tokens);
             printf("\n");
         }
 
@@ -490,42 +498,42 @@ int main(){
         }
         
         // exit
-        if (is_multi == 0 && strcmp(cmd->argv[0], "exit") == 0) {
+        if (is_multi == 0 && cmd->argv[0] && strcmp(cmd->argv[0], "exit") == 0) {
             printf("logout\n");
             break;
         }
 
         // pwd
-        else if(is_multi == 0 && strcmp(cmd->argv[0], "pwd") == 0){
+        else if(is_multi == 0 && cmd->argv[0] && strcmp(cmd->argv[0], "pwd") == 0){
             pwd(cmd->is_background);
         }
 
         // cd
-        else if(is_multi == 0 && strcmp(cmd->argv[0], "cd") == 0){
-            cd(cmd->argv[1]);
+        else if(is_multi == 0 && cmd->argv[0] && strcmp(cmd->argv[0], "cd") == 0){
+            cd(cmd->argv[1], current_path);
         }
 
         // ls
-        else if(is_multi == 0 && strcmp(cmd->argv[0], "ls") == 0){
+        else if(is_multi == 0 && cmd->argv[0] && strcmp(cmd->argv[0], "ls") == 0){
             if(cmd->argv[1] && strstr(cmd->argv[1], "-a")){
-                ls(cmd->is_background, 1);
+                ls(cmd->is_background, 1, current_path);
             } else{
-                ls(cmd->is_background, 0);
+                ls(cmd->is_background, 0, current_path);
             }
         }
 
         // cat
-        else if(is_multi == 0 && strcmp(cmd->argv[0], "cat") == 0)  {
+        else if(is_multi == 0 && cmd->argv[0] && strcmp(cmd->argv[0], "cat") == 0)  {
             cat(cmd->is_background, cmd->argv[1]);
         }
 
         // execute command exept for built-in commands
         else{
-            execute_command(cmd);
+            execute_command(cmd, current_path);
         }
 
         // free tokens
-        clear_tokens();
+        free_tokens(tokens);
         // free command tree
         free_command(cmd);
     }
